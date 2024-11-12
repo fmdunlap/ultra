@@ -2,11 +2,14 @@ package log
 
 import (
     "fmt"
+    "maps"
     "net/http"
     "strconv"
     "strings"
     "time"
 )
+
+var defaultDateTimeFormat = "2006-01-02 15:04:05"
 
 // Field is an individual piece of data that is added to a log line. It can be a simple value, or an object.
 //
@@ -14,13 +17,15 @@ import (
 type Field interface {
     // NewFieldFormatter returns a FieldFormatter, and an error if an error occurs while creating the FieldFormatter.
     NewFieldFormatter() (FieldFormatter, error)
+    // Name returns the name of the field. This is used to identify the field in the formatter.
+    Name() string
+    // Settings returns the options for the field.
+    Settings() FieldSettings
 }
 
-// FieldResult is the result of formatting a field. It is used by the logger to annotate entries with metadata, such as
-// the name of the field.
-type FieldResult struct {
-    Name string
-    Data any
+type FieldSettings struct {
+    HideKey     bool
+    AlwaysMatch bool
 }
 
 // FieldFormatter is a function that formats a field. It takes a LogLineArgs and the data to be formatted, and returns
@@ -28,19 +33,21 @@ type FieldResult struct {
 type FieldFormatter func(
     args LogLineArgs,
     data any,
-) (FieldResult, error)
+) (any, error)
+
+// TODO: Consider adding positioning control to fields. I.e. AlwaysLast or AlwaysFirst. That way we could have a field,
+//  like the message field, that always comes last, and a field like the level or current time field that always comes
+//  first.
 
 // ObjectField is a field that provides a formatter for a struct of type T.
 type ObjectField[T any] struct {
+    // name is the name of the field.
+    name string
+    // options are the options for the field.
+    options FieldSettings
+    // format is the formatter for the field.
     format FieldFormatter
 }
-
-// ObjectFieldFormatter is a function that formats a struct of type T and returns the formatted data. Note that this
-// does not (presently) return a FieldResult, but it may in the future.
-type ObjectFieldFormatter[T any] func(
-    args LogLineArgs,
-    data T,
-) any
 
 // NewFieldFormatter returns the FieldFormatter for the ObjectField. Typically, the FieldFormatter is computed when we
 // create a new ObjectField with [NewObjectField], but a custom implementation can create the FieldFormatter at any
@@ -49,35 +56,104 @@ func (f ObjectField[T]) NewFieldFormatter() (FieldFormatter, error) {
     return f.format, nil
 }
 
+// Name returns the name of the field.
+func (f ObjectField[T]) Name() string {
+    return f.name
+}
+
+// FieldSettings returns the options for the field.
+func (f ObjectField[T]) Settings() FieldSettings {
+    return f.options
+}
+
+// ObjectFieldFormatter is a function that formats a struct of type T and returns the formatted data. Note that this
+// does not (presently) return a FieldResult, but it may in the future.
+type ObjectFieldFormatter[T any] func(
+    args LogLineArgs,
+    data T,
+) (any, error)
+
 // NewObjectField returns a new ObjectField with the specified name and formatter. If the name is empty, an error is
 // returned. If the formatter is nil, an error is returned.
 //
 // The formatter is a function that takes a LogLineArgs and a T, and returns a FieldResult. The FieldResult contains
 // the name of the field and the formatted data that the logger will use to create the log line.
-func NewObjectField[T any](name string, formatter ObjectFieldFormatter[T]) (ObjectField[T], error) {
+func NewObjectField[T any](name string, formatter ObjectFieldFormatter[T], opts ...FieldOption) (ObjectField[T], error) {
     if name == "" {
         return ObjectField[T]{}, ErrorEmptyFieldName
     }
     if formatter == nil {
         return ObjectField[T]{}, ErrorNilFormatter
     }
-    return ObjectField[T]{
-        format: func(args LogLineArgs, data any) (FieldResult, error) {
-            result := FieldResult{
-                Name: name,
-            }
 
-            _, ok := data.(T)
-            if !ok {
-                return result, &ErrorInvalidFieldDataType{
-                    field: name,
-                }
-            }
-            result.Data = formatter(args, data.(T))
+    objectField := ObjectField[T]{
+        name: name,
+    }
 
-            return result, nil
+    for _, opt := range opts {
+        if err := opt(&objectField.options); err != nil {
+            return ObjectField[T]{}, err
+        }
+    }
+
+    objectField.format = func(args LogLineArgs, data any) (any, error) {
+        if _, ok := data.(T); !ok {
+            return nil, &ErrorInvalidFieldDataType{
+                field: name,
+            }
+        }
+
+        return formatter(args, data.(T))
+    }
+
+    return objectField, nil
+}
+
+type FieldOption func(f *FieldSettings) error
+
+func WithHideKey(hideKey bool) FieldOption {
+    return func(s *FieldSettings) error {
+        s.HideKey = hideKey
+        return nil
+    }
+}
+
+func WithAlwaysMatch(formatWithoutData bool) FieldOption {
+    return func(s *FieldSettings) error {
+        s.AlwaysMatch = formatWithoutData
+        return nil
+    }
+}
+
+type LineArgsField struct {
+    name   string
+    format FieldFormatter
+}
+
+type LineArgsFormatter func(args LogLineArgs) (any, error)
+
+func NewLineArgsField(name string, formatter LineArgsFormatter) (Field, error) {
+    return &LineArgsField{
+        name: name,
+        format: func(args LogLineArgs, _ any) (any, error) {
+            return formatter(args)
         },
     }, nil
+}
+
+func (f *LineArgsField) Name() string {
+    return f.name
+}
+
+func (f *LineArgsField) Settings() FieldSettings {
+    return FieldSettings{
+        HideKey:     true,
+        AlwaysMatch: true,
+    }
+}
+
+func (f *LineArgsField) NewFieldFormatter() (FieldFormatter, error) {
+    return f.format, nil
 }
 
 // NewStringField returns a new Field that formats a string into a string. The field will format the string using the
@@ -90,8 +166,8 @@ func NewObjectField[T any](name string, formatter ObjectFieldFormatter[T]) (Obje
 func NewStringField(name string) (Field, error) {
     return NewObjectField[string](
         name,
-        func(args LogLineArgs, data string) any {
-            return data
+        func(args LogLineArgs, data string) (any, error) {
+            return data, nil
         },
     )
 }
@@ -107,14 +183,14 @@ func NewStringField(name string) (Field, error) {
 func NewBoolField(name string) (Field, error) {
     return NewObjectField[bool](
         name,
-        func(args LogLineArgs, data bool) any {
-            if args.OutputFormat == OutputFormatText {
-                if data {
-                    return "true"
-                }
-                return "false"
+        func(args LogLineArgs, data bool) (any, error) {
+            if args.OutputFormat != OutputFormatText {
+                return data, nil
             }
-            return data
+            if data {
+                return "true", nil
+            }
+            return "false", nil
         },
     )
 }
@@ -130,11 +206,11 @@ func NewBoolField(name string) (Field, error) {
 func NewTimeField(name, format string) (Field, error) {
     return NewObjectField[time.Time](
         name,
-        func(args LogLineArgs, data time.Time) any {
+        func(args LogLineArgs, data time.Time) (any, error) {
             if args.OutputFormat == OutputFormatText {
-                return data.Format(format)
+                return data.Format(format), nil
             }
-            return data
+            return data, nil
         },
     )
 }
@@ -149,11 +225,11 @@ func NewTimeField(name, format string) (Field, error) {
 func NewIntField(name string) (Field, error) {
     return NewObjectField[int](
         name,
-        func(args LogLineArgs, data int) any {
+        func(args LogLineArgs, data int) (any, error) {
             if args.OutputFormat == OutputFormatText {
-                return strconv.Itoa(data)
+                return strconv.Itoa(data), nil
             }
-            return data
+            return data, nil
         },
     )
 }
@@ -168,11 +244,11 @@ func NewIntField(name string) (Field, error) {
 func NewFloatField(name string) (Field, error) {
     return NewObjectField[float64](
         name,
-        func(args LogLineArgs, data float64) any {
+        func(args LogLineArgs, data float64) (any, error) {
             if args.OutputFormat == OutputFormatText {
-                return strconv.FormatFloat(data, 'f', -1, 64)
+                return strconv.FormatFloat(data, 'f', -1, 64), nil
             }
-            return data
+            return data, nil
         },
     )
 }
@@ -187,11 +263,11 @@ func NewFloatField(name string) (Field, error) {
 func NewDurationField(name string) (Field, error) {
     return NewObjectField[time.Duration](
         name,
-        func(args LogLineArgs, data time.Duration) any {
+        func(args LogLineArgs, data time.Duration) (any, error) {
             if args.OutputFormat == OutputFormatText {
-                return data.String()
+                return data.String(), nil
             }
-            return data
+            return data, nil
         },
     )
 }
@@ -207,11 +283,11 @@ func NewDurationField(name string) (Field, error) {
 func NewErrorField(name string) (Field, error) {
     return NewObjectField[error](
         name,
-        func(args LogLineArgs, data error) any {
+        func(args LogLineArgs, data error) (any, error) {
             if args.OutputFormat == OutputFormatText {
-                return data.Error()
+                return data.Error(), nil
             }
-            return data
+            return data, nil
         },
     )
 }
@@ -232,24 +308,28 @@ func NewArrayField[T any](name string, formatter ObjectFieldFormatter[T]) (Field
     }
     return NewObjectField[[]T](
         name,
-        func(args LogLineArgs, data []T) any {
+        func(args LogLineArgs, data []T) (any, error) {
             res := make([]any, len(data))
+            var err error
             for i, v := range data {
-                res[i] = formatter(args, v)
+                res[i], err = formatter(args, v)
+                if err != nil {
+                    return nil, err
+                }
             }
 
             if args.OutputFormat == OutputFormatText {
                 if len(res) == 0 {
-                    return ""
+                    return "", nil
                 }
                 stringRes := make([]string, len(res))
                 for i, v := range res {
                     stringRes[i] = fmt.Sprintf("%v", v)
                 }
-                return fmt.Sprintf("[%s]", strings.Join(stringRes, ", "))
+                return fmt.Sprintf("[%s]", strings.Join(stringRes, ", ")), nil
             }
 
-            return res
+            return res, err
         },
     )
 }
@@ -274,26 +354,36 @@ func NewMapField[K comparable, V any](name string, keyFormatter ObjectFieldForma
     if valueFormatter == nil {
         return ObjectField[map[K]V]{}, ErrorNilFormatter
     }
+
     return NewObjectField[map[K]V](
         name,
-        func(args LogLineArgs, data map[K]V) any {
+        func(args LogLineArgs, data map[K]V) (any, error) {
             res := make(map[any]any)
             for k, v := range data {
-                res[keyFormatter(args, k)] = valueFormatter(args, v)
+                key, err := keyFormatter(args, k)
+                if err != nil {
+                    return nil, err
+                }
+                value, err := valueFormatter(args, v)
+                if err != nil {
+                    return nil, err
+                }
+                res[key] = value
             }
 
+            // At least for JSON (the only currently non-text output format), we need to return a map[string]any.
+            // Otherwise, the JSON formatter will try to marshal the map[any]any into JSON, which will fail.
             if args.OutputFormat != OutputFormatText {
                 validMap := make(map[string]any)
                 for k, v := range res {
                     validMap[fmt.Sprintf("%v", k)] = v
                 }
-                return validMap
+                return validMap, nil
             }
 
-            return res
+            return res, nil
         },
     )
-
 }
 
 // NewCurrentTimeField returns a new Field that formats the current time into a string. The field will format the time
@@ -304,46 +394,73 @@ func NewMapField[K comparable, V any](name string, keyFormatter ObjectFieldForma
 // OutputFormats:
 //  - OutputFormatText => time is formatted as a string with the format provided in the format argument.
 //  - OutputFormatJSON => time is formatted as a time.Time.
-func NewCurrentTimeField(name, format string) (Field, error) {
-    if name == "" {
-        return &currentTimeField{}, ErrorEmptyFieldName
+func NewCurrentTimeField(settings *CurrentTimeFieldSettings) Field {
+    if settings == nil {
+        settings = &CurrentTimeFieldSettings{}
+    }
+    settings.MergeDefault()
+
+    currentTimeField, err := NewLineArgsField(
+        settings.Name,
+        func(args LogLineArgs) (any, error) {
+            now := time.Now()
+
+            // This would be better if we could inject a fake clock into the field formatter. As is we're wasting a
+            // compare operation here.
+            if settings.fakeNow != nil {
+                now = *settings.fakeNow
+            }
+
+            switch args.OutputFormat {
+            case OutputFormatJSON:
+                return now, nil
+            case OutputFormatText:
+                return now.Format(settings.Format), nil
+            }
+
+            return nil, nil
+        },
+    )
+
+    if err != nil {
+        printSkippingFieldErr(settings.Name, err)
+        return nil
     }
 
-    ctf := &currentTimeField{
-        name:      name,
-        fmtString: format,
-        clock:     &realClock{},
+    return currentTimeField
+}
+
+func NewDefaultCurrentTimeField() Field {
+    return NewCurrentTimeField(nil)
+}
+
+type CurrentTimeFieldSettings struct {
+    // Name is the name of the field.
+    Name string
+    // Format is the format to use for the current time field.
+    Format string
+
+    // for testing
+    fakeNow *time.Time
+}
+
+var defaultCurrentTimeFieldSettings = CurrentTimeFieldSettings{
+    Name:   "currentTime",
+    Format: defaultDateTimeFormat,
+}
+
+func (s *CurrentTimeFieldSettings) MergeDefault() {
+    if s.Name == "" {
+        s.Name = defaultCurrentTimeFieldSettings.Name
     }
-
-    return ctf, nil
-}
-
-type currentTimeField struct {
-    name      string
-    fmtString string
-    clock     clock
-}
-
-func (f *currentTimeField) NewFieldFormatter() (FieldFormatter, error) {
-    return f.format, nil
-}
-
-func (f *currentTimeField) format(args LogLineArgs, _ any) (FieldResult, error) {
-    result := FieldResult{
-        Name: f.name,
+    if s.Format == "" {
+        s.Format = defaultCurrentTimeFieldSettings.Format
     }
-
-    now := f.clock.Now()
-
-    switch args.OutputFormat {
-    case OutputFormatJSON:
-        result.Data = now
-    case OutputFormatText:
-        result.Data = now.Format(f.fmtString)
-    }
-
-    return result, nil
 }
+
+// TODO: May want different behavior when serializing to non-text output formats. Currently we're returning the string
+//  value of the Level. Do we want to keep the brackets? Or maybe we want to output the integer value of the level?
+//  Maybe we just want to make the whole thing configurable? ¯\_(ツ)_/¯
 
 // NewLevelField returns a new Field that formats a level into a string. The field will format the level using the
 // String() method of the level.
@@ -355,45 +472,73 @@ func (f *currentTimeField) format(args LogLineArgs, _ any) (FieldResult, error) 
 // OutputFormats:
 //  - OutputFormatText => level is formatted as a string with the format %v and wrapped in the bracket type.
 //  - OutputFormatJSON => level is formatted as a level. Not wrapped in the bracket type.
-//
-// TODO: May want different behavior when serializing to non-text output formats. Currently we're returning the string
-//  value of the Level. Do we want to keep the brackets? Or maybe we want to output the integer value of the level?
-//  Maybe we just want to make the whole thing configurable? ¯\_(ツ)_/¯
-func NewLevelField(bracket Bracket) Field {
-    return &levelField{
-        bracket: bracket,
+func NewLevelField(settings *LevelFieldSettings) Field {
+    if settings == nil {
+        settings = &LevelFieldSettings{}
     }
-}
+    settings.MergeDefault()
 
-type levelField struct {
-    bracket      Bracket
-    levelStrings map[Level]string
-}
+    textLevelStrings := make(map[any]string)
 
-func (f *levelField) NewFieldFormatter() (FieldFormatter, error) {
-    if f.levelStrings == nil {
-        f.levelStrings = make(map[Level]string)
-
-        for _, lvl := range AllLevels() {
-            f.levelStrings[lvl] = f.bracket.Wrap(lvl.String())
-        }
+    // Merge guarantees that there will always be a level string for each level.
+    for _, lvl := range AllLevels() {
+        textLevelStrings[lvl] = settings.Bracket.Wrap(settings.StringsForLevels[lvl])
     }
 
-    return f.format, nil
-}
+    levelField, err := NewLineArgsField(
+        settings.Name,
+        func(args LogLineArgs) (any, error) {
+            if args.OutputFormat == OutputFormatText {
+                return textLevelStrings[args.Level], nil
+            }
+            return settings.StringsForLevels[args.Level], nil
+        },
+    )
 
-func (f *levelField) format(args LogLineArgs, _ any) (FieldResult, error) {
-    if args.OutputFormat == OutputFormatText {
-        return FieldResult{
-            Name: "level",
-            Data: f.levelStrings[args.Level],
-        }, nil
+    if err != nil {
+        printSkippingFieldErr(settings.Name, err)
+        return nil
     }
 
-    return FieldResult{
-        Name: "level",
-        Data: args.Level.String(),
-    }, nil
+    return levelField
+}
+
+func NewDefaultLevelField() Field {
+    return NewLevelField(nil)
+}
+
+var defaultLevelStrings = map[Level]string{
+    Debug: Debug.String(),
+    Info:  Info.String(),
+    Warn:  Warn.String(),
+    Error: Error.String(),
+    Panic: Panic.String(),
+}
+
+type LevelFieldSettings struct {
+    Name             string
+    Bracket          Bracket
+    StringsForLevels map[Level]string
+}
+
+var defaultLevelFieldSettings = LevelFieldSettings{
+    Name:             "level",
+    Bracket:          Brackets.Angle,
+    StringsForLevels: maps.Clone(defaultLevelStrings),
+}
+
+func (s *LevelFieldSettings) MergeDefault() {
+    if s.Name == "" {
+        s.Name = defaultLevelFieldSettings.Name
+    }
+
+    if s.Bracket == nil {
+        s.Bracket = defaultLevelFieldSettings.Bracket
+    }
+
+    if s.StringsForLevels == nil {
+        s.StringsForLevels = defaultLevelFieldSettings.StringsForLevels
+    }
 }
 
 // NewMessageField returns a new Field that formats a message into a string. The field will format the message using the
@@ -405,32 +550,129 @@ func (f *levelField) format(args LogLineArgs, _ any) (FieldResult, error) {
 //  - OutputFormatText => message is formatted as a string with the format %v.
 //  - OutputFormatJSON => message is formatted as a message.
 func NewMessageField() Field {
-    return &fieldMessage{}
-}
+    msgFieldName := "message"
 
-type fieldMessage struct{}
+    msgField, err := NewObjectField[string](
+        msgFieldName,
+        func(args LogLineArgs, msg string) (any, error) {
+            return msg, nil
+        },
+        WithHideKey(true),
+    )
 
-func (f *fieldMessage) NewFieldFormatter() (FieldFormatter, error) {
-    return f.format, nil
-}
-
-func (f *fieldMessage) format(_ LogLineArgs, message any) (FieldResult, error) {
-    result := FieldResult{
-        Name: "message",
+    if err != nil {
+        printSkippingFieldErr(msgFieldName, err)
+        return nil
     }
 
-    switch message.(type) {
-    case string:
-        result.Data = message.(string)
-    case fmt.Stringer:
-        result.Data = message.(fmt.Stringer).String()
-    default:
-        return result, &ErrorInvalidFieldDataType{
-            field: "message",
-        }
+    return msgField
+}
+
+// NewTagField returns a new Field for the logger tag. The field will format the tag using the provided settings.
+// If the logger has no tag, the field will return an empty string.
+//
+// If the name is empty, an error is returned.
+//
+// OutputFormats:
+//  - OutputFormatText => tag is formatted as a string with the format %v.
+//  - OutputFormatJSON => tag is formatted as a tag.
+func NewTagField(settings *TagFieldSettings) (Field, error) {
+    if settings == nil {
+        settings = &TagFieldSettings{}
+    }
+    settings.MergeDefault()
+
+    tagFmtString := buildTagFormatString(settings.Bracket, settings.PadSettings)
+
+    return NewLineArgsField(
+        settings.Name,
+        func(args LogLineArgs) (any, error) {
+            if args.Tag == "" {
+                return "", &ErrorNonFatalFormatterError{settings.Name, ErrorTagFieldActiveButNoTag}
+            }
+
+            if args.OutputFormat == OutputFormatText {
+                return fmt.Sprintf(tagFmtString, args.Tag), nil
+            }
+            return args.Tag, nil
+        },
+    )
+}
+
+func NewDefaultTagField() Field {
+    f, _ := NewTagField(nil)
+    return f
+}
+
+func buildTagFormatString(bracket Bracket, padSettings *TagPadSettings) string {
+    b := strings.Builder{}
+
+    if padSettings != nil && padSettings.PadChar != "" {
+        b.WriteString(strings.Repeat(padSettings.PadChar, padSettings.PrefixPadSize))
     }
 
-    return result, nil
+    b.WriteString(bracket.Open())
+    b.WriteString("%s")
+    b.WriteString(bracket.Close())
+
+    if padSettings != nil && padSettings.PadChar != "" {
+        b.WriteString(strings.Repeat(padSettings.PadChar, padSettings.SuffixPadSize))
+    }
+
+    return b.String()
+}
+
+// TagFieldSettings are the settings for the TagField.
+type TagFieldSettings struct {
+    // Name is the name of the field.
+    Name string
+    // Bracket is the bracket type to use for the tag field.
+    Bracket Bracket
+    // PadSettings are the settings for padding the tag field.
+    PadSettings *TagPadSettings
+}
+
+var defaultTagFieldSettings = TagFieldSettings{
+    Name:    "tag",
+    Bracket: Brackets.Square,
+}
+
+// TagPadSettings are the settings for padding a tag field. If PadChar is empty, it will default to a space.
+// Note: for non-text formatters the padding setting may be ignored (it is in the built in JSON formatter).
+type TagPadSettings struct {
+    // PadChar is the character to use for padding. If empty, it will default to a space.
+    PadChar string
+    // PrefixPadSize is the number of times PadChar will be added before the tag.
+    PrefixPadSize int
+    // SuffixPadSize is the number of times PadChar will be added after the tag.
+    SuffixPadSize int
+}
+
+var defaultTagPadSettings = TagPadSettings{
+    PadChar:       " ",
+    PrefixPadSize: 0,
+    SuffixPadSize: 0,
+}
+
+func (s *TagFieldSettings) MergeDefault() {
+    if s.Name == "" {
+        s.Name = defaultTagFieldSettings.Name
+    }
+    if s.Bracket == nil {
+        s.Bracket = defaultTagFieldSettings.Bracket
+    }
+    if s.PadSettings == nil {
+        s.PadSettings = &TagPadSettings{}
+    }
+    if s.PadSettings.PadChar == "" {
+        s.PadSettings.PadChar = defaultTagPadSettings.PadChar
+    }
+    if s.PadSettings.PrefixPadSize == 0 {
+        s.PadSettings.PrefixPadSize = defaultTagPadSettings.PrefixPadSize
+    }
+    if s.PadSettings.SuffixPadSize == 0 {
+        s.PadSettings.SuffixPadSize = defaultTagPadSettings.SuffixPadSize
+    }
 }
 
 // NewRequestField returns a new Field that formats an http.Request into a string. The field will format the request
@@ -443,10 +685,12 @@ func (f *fieldMessage) format(_ LogLineArgs, message any) (FieldResult, error) {
 //    [RequestFieldSettings]. Included fields are returned as a space separated string with key=value elements. Returns
 //    an empty string if [RequestFieldSettings] has no true fields.
 //  - OutputFormatJSON => [RequestLogEntry].
-func NewRequestField(name string, settings RequestFieldSettings) (Field, error) {
+func NewRequestField(settings *RequestFieldSettings) (Field, error) {
+    settings = defaultRequestFieldSettings.Merge(settings)
+
     return NewObjectField[*http.Request](
-        name,
-        func(args LogLineArgs, data *http.Request) any {
+        settings.Name,
+        func(args LogLineArgs, data *http.Request) (any, error) {
             logEntry := RequestLogEntry{}
 
             if settings.LogReceivedAt {
@@ -466,9 +710,9 @@ func NewRequestField(name string, settings RequestFieldSettings) (Field, error) 
             }
 
             if args.OutputFormat == OutputFormatText {
-                return logEntry.String(settings.TimeFormat)
+                return logEntry.String(settings.TimeFormat), nil
             }
-            return logEntry
+            return logEntry, nil
         },
     )
 }
@@ -480,6 +724,9 @@ func NewRequestField(name string, settings RequestFieldSettings) (Field, error) 
 //
 // If the time format is empty, the default time format is used.
 type RequestFieldSettings struct {
+    // Name is the name of the field.
+    Name string
+
     // TimeFormat is the format to use for the ReceivedAt field.
     TimeFormat string
 
@@ -491,6 +738,38 @@ type RequestFieldSettings struct {
     LogPath bool
     // LogSourceIP determines whether to include the SourceIP field in the formatted output.
     LogSourceIP bool
+}
+
+var defaultRequestFieldSettings = RequestFieldSettings{
+    Name:          "request",
+    TimeFormat:    defaultDateTimeFormat,
+    LogReceivedAt: false,
+    LogMethod:     true,
+    LogPath:       true,
+    LogSourceIP:   false,
+}
+
+func (s *RequestFieldSettings) Merge(other *RequestFieldSettings) *RequestFieldSettings {
+    if other.Name != "" {
+        s.Name = other.Name
+    }
+    if other.TimeFormat != "" {
+        s.TimeFormat = other.TimeFormat
+    }
+    if other.LogReceivedAt {
+        s.LogReceivedAt = other.LogReceivedAt
+    }
+    if other.LogMethod {
+        s.LogMethod = other.LogMethod
+    }
+    if other.LogPath {
+        s.LogPath = other.LogPath
+    }
+    if other.LogSourceIP {
+        s.LogSourceIP = other.LogSourceIP
+    }
+
+    return s
 }
 
 // RequestLogEntry is a struct that represents a formatted http.Request.
@@ -528,10 +807,12 @@ func (r *RequestLogEntry) String(timeFmt string) string {
 //    [ResponseFieldSettings]. Included fields are returned as a space separated string with key=value elements. Returns
 //    an empty string if [RequestFieldSettings] has no true fields.
 //  - OutputFormatJSON => [ResponseLogEntry].
-func NewResponseField(name string, settings ResponseFieldSettings) (Field, error) {
+func NewResponseField(settings *ResponseFieldSettings) (Field, error) {
+    settings = defaultResponseFieldSettings.Merge(settings)
+
     return NewObjectField[*http.Response](
-        name,
-        func(args LogLineArgs, data *http.Response) any {
+        settings.Name,
+        func(args LogLineArgs, data *http.Response) (any, error) {
             logEntry := ResponseLogEntry{}
 
             if settings.LogStatus {
@@ -547,20 +828,50 @@ func NewResponseField(name string, settings ResponseFieldSettings) (Field, error
             }
 
             if args.OutputFormat == OutputFormatText {
-                return logEntry.String()
+                return logEntry.String(), nil
             }
-            return logEntry
+            return logEntry, nil
         },
     )
 }
 
 type ResponseFieldSettings struct {
+    // Name is the name of the field.
+    Name string
     // LogStatus determines whether to include the http.Response.Status field in the formatted output.
     LogStatus bool
     // LogStatusCode determines whether to include the http.Response.StatusCode field in the formatted output.
     LogStatusCode bool
     // LogPath determines whether to include the associated http.Request.URL.Path field in the formatted output.
     LogPath bool
+}
+
+var defaultResponseFieldSettings = ResponseFieldSettings{
+    Name:          "response",
+    LogStatus:     true,
+    LogStatusCode: false,
+    LogPath:       true,
+}
+
+func (s *ResponseFieldSettings) Merge(other *ResponseFieldSettings) *ResponseFieldSettings {
+    if other == nil {
+        return s
+    }
+
+    if other.Name != "" {
+        s.Name = other.Name
+    }
+    if other.LogStatus {
+        s.LogStatus = other.LogStatus
+    }
+    if other.LogStatusCode {
+        s.LogStatusCode = other.LogStatusCode
+    }
+    if other.LogPath {
+        s.LogPath = other.LogPath
+    }
+
+    return s
 }
 
 type ResponseLogEntry struct {
@@ -570,9 +881,15 @@ type ResponseLogEntry struct {
 }
 
 func (r *ResponseLogEntry) String() string {
-    parts := []string{}
+    parts := make([]string, 0)
     if r.StatusCode != 0 {
         parts = append(parts, strconv.Itoa(r.StatusCode))
+    }
+    if r.Status != "" {
+        parts = append(parts, r.Status)
+    }
+    if r.Path != "" {
+        parts = append(parts, r.Path)
     }
     return strings.Join(parts, " ")
 }

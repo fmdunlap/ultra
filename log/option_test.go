@@ -11,7 +11,7 @@ func ExampleWithMinLevel() {
     // Note: were setting WithAsync(false) here just to ensure that the output is synchronous in the example.
     // In a real application, you *could* do this, but it will make your logging block the main thread until the log
     // has been written to the output.
-    logger, _ := NewLoggerWithOptions(WithFields(os.Stdout, []Field{NewLevelField(Brackets.Angle), NewMessageField()}), WithMinLevel(Warn), WithAsync(false))
+    logger, _ := NewLoggerWithOptions(WithFields(os.Stdout, []Field{NewDefaultLevelField(), NewMessageField()}), WithMinLevel(Warn), WithAsync(false))
 
     logger.Info("This is an info message.")
     logger.Debug("This is a debug message.")
@@ -29,7 +29,7 @@ func ExampleWithFields() {
     // In a real application, you *could* do this, but it will make your logging block the main thread until the log
     // has been written to the output.
     logger, _ := NewLoggerWithOptions(
-        WithFields(os.Stdout, []Field{NewLevelField(Brackets.Angle), NewMessageField()}),
+        WithFields(os.Stdout, []Field{NewDefaultLevelField(), NewMessageField()}),
         WithAsync(false),
         WithAsync(false),
     )
@@ -51,12 +51,12 @@ func ExampleWithDestination() {
     bufOne := &bytes.Buffer{}
     bufTwo := &bytes.Buffer{}
 
-    formatterOne, err := NewFormatter(OutputFormatText, []Field{NewLevelField(Brackets.Angle), NewMessageField()})
+    formatterOne, err := NewFormatter(OutputFormatText, []Field{NewDefaultLevelField(), NewMessageField()})
     if err != nil {
         panic(err)
     }
 
-    formatterTwo, err := NewFormatter(OutputFormatJSON, []Field{NewTagField(Brackets.Square, nil), NewMessageField()})
+    formatterTwo, err := NewFormatter(OutputFormatJSON, []Field{NewDefaultTagField(), NewMessageField()})
     if err != nil {
         panic(err)
     }
@@ -87,8 +87,8 @@ func ExampleWithDestination_sharedFormatter() {
     bufTwo := bytes.NewBufferString("")
 
     formatter, err := NewFormatter(OutputFormatText, []Field{
-        NewTagField(Brackets.Square, nil),
-        NewLevelField(Brackets.Angle),
+        NewDefaultTagField(),
+        NewDefaultLevelField(),
         NewMessageField(),
     })
     if err != nil {
@@ -119,12 +119,12 @@ func ExampleWithDestinations() {
     bufOne := &bytes.Buffer{}
     bufTwo := &bytes.Buffer{}
 
-    formatterOne, err := NewFormatter(OutputFormatText, []Field{NewLevelField(Brackets.Angle), NewMessageField()})
+    formatterOne, err := NewFormatter(OutputFormatText, []Field{NewDefaultLevelField(), NewMessageField()})
     if err != nil {
         panic(err)
     }
 
-    formatterTwo, err := NewFormatter(OutputFormatJSON, []Field{NewTagField(Brackets.Square, nil), NewMessageField()})
+    formatterTwo, err := NewFormatter(OutputFormatJSON, []Field{NewDefaultTagField(), NewMessageField()})
     if err != nil {
         panic(err)
     }
@@ -159,7 +159,7 @@ func ExampleWithSilent() {
     // In a real application, you *could* do this, but it will make your logging block the main thread until the log
     // has been written to the output.
     logger, _ := NewLoggerWithOptions(
-        WithFields(buf, []Field{NewLevelField(Brackets.Angle), NewMessageField()}),
+        WithFields(buf, []Field{NewDefaultLevelField(), NewMessageField()}),
         WithSilent(true),
         WithAsync(false),
     )
@@ -179,7 +179,7 @@ func ExampleWithDefaultColorizationEnabled() {
     // In a real application, you *could* do this, but it will make your logging block the main thread until the log
     // has been written to the output.
     logger, _ := NewLoggerWithOptions(
-        WithFields(buf, []Field{NewLevelField(Brackets.Angle), NewMessageField()}),
+        WithFields(buf, []Field{NewDefaultLevelField(), NewMessageField()}),
         WithDefaultColorizationEnabled(buf),
         WithAsync(false),
     )
@@ -192,7 +192,6 @@ func ExampleWithDefaultColorizationEnabled() {
 }
 
 func ExampleWithCustomColorization() {
-
     testColors := map[Level]Color{
         Debug: ColorAnsiRGB(235, 216, 52),
         Info:  ColorAnsiRGB(12, 240, 228),
@@ -201,7 +200,7 @@ func ExampleWithCustomColorization() {
         Panic: ColorAnsiRGB(237, 0, 0),
     }
 
-    formatter, _ := NewFormatter(OutputFormatText, []Field{NewLevelField(Brackets.Angle), NewMessageField()}, WithColorization(testColors))
+    formatter, _ := NewFormatter(OutputFormatText, []Field{NewDefaultLevelField(), NewMessageField()}, WithColorization(testColors))
 
     buf := &bytes.Buffer{}
 
@@ -217,9 +216,6 @@ func ExampleWithCustomColorization() {
     logger.Info("Info")
     logger.Warn("Warn")
     logger.Error("Error")
-
-    fmt.Println(buf.Bytes())
-
     // NOTE: Colorization breaks Golang's default output formatting, so you'll need to use the following to see the
     // colors:
     //
@@ -230,6 +226,7 @@ func ExampleWithCustomColorization() {
     // <WARN> Warn // Orangish
     // <ERROR> Error // Reddish
 
+    fmt.Print(buf.Bytes())
     // Output:
     // [27 91 51 56 59 50 59 50 51 53 59 50 49 54 59 53 50 109 60 68 69 66 85 71 62 32 68 101 98 117 103 27 91 48 109 10 27 91 51 56 59 50 59 49 50 59 50 52 48 59 50 50 56 109 60 73 78 70 79 62 32 73 110 102 111 27 91 48 109 10 27 91 51 56 59 50 59 50 51 55 59 49 50 51 59 48 109 60 87 65 82 78 62 32 87 97 114 110 27 91 48 109 10 27 91 51 56 59 50 59 50 51 55 59 48 59 48 109 60 69 82 82 79 82 62 32 69 114 114 111 114 27 91 48 109 10]
 }
@@ -238,7 +235,7 @@ func ExampleWithCustomColorization() {
 func ExampleWithTag() {
     buf := &bytes.Buffer{}
     logger, _ := NewLoggerWithOptions(
-        WithFields(buf, []Field{NewTagField(Brackets.Square, nil), NewLevelField(Brackets.Angle), NewMessageField()}),
+        WithFields(buf, []Field{NewDefaultTagField(), NewDefaultLevelField(), NewMessageField()}),
         WithTag("TAG"),
         WithAsync(false),
     )

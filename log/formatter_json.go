@@ -4,10 +4,10 @@ import (
     "encoding/json"
 )
 
-// JSONFormatter is a formatter that formats log lines as JSON.
-type JSONFormatter struct {
-    Fields                 []Field
-    destinationInitialized bool
+// jsonFormatter is a formatter that formats log lines as JSON.
+type jsonFormatter struct {
+    Fields          []Field // Keep these in an array to preserve the order of the fields.
+    FieldFormatters map[string]FieldFormatter
 }
 
 // TODO: Provide a way to specify behavior on nil data. I.e. if the field should be omitted, or if we should include
@@ -16,23 +16,26 @@ type JSONFormatter struct {
 
 // FormatLogLine formats the log line using the provided data and returns a FormatResult which contains the formatted
 // log line and any errors that may have occurred.
-func (f *JSONFormatter) FormatLogLine(args LogLineArgs, data any) FormatResult {
-    jsonMap := make(map[string]any)
-
+func (f *jsonFormatter) FormatLogLine(args LogLineArgs, data []any) FormatResult {
     args.OutputFormat = OutputFormatJSON
 
-    for _, field := range f.Fields {
-        fieldResult, err := computeFieldResult(field, args, data)
-        if err != nil {
-            return FormatResult{nil, err}
+    jsonMap := make(map[string]any)
+    fieldResultChan := make(chan fieldProcessingResult)
+
+    // Guaranteed to close on error result and once all fields have been processed.
+    go processFieldsWithData(fieldResultChan, args, f.Fields, f.FieldFormatters, data)
+
+    for {
+        result, ok := <-fieldResultChan
+        if !ok {
+            break
         }
 
-        // Throw away fields that are nil or have nil data.
-        if fieldResult == nil || fieldResult.Data == nil {
-            continue
+        if result.err != nil {
+            return FormatResult{nil, result.err}
         }
 
-        jsonMap[fieldResult.Name] = fieldResult.Data
+        jsonMap[result.fieldName] = result.fieldData
     }
 
     jBytes, err := json.Marshal(jsonMap)

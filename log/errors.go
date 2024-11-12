@@ -43,6 +43,15 @@ func (e *ErrorLevelParsing) Error() string {
     return fmt.Sprintf("invalid level: %s", e.level)
 }
 
+type ErrorFieldInitialization struct {
+    fieldName string
+    err       error
+}
+
+func (e *ErrorFieldInitialization) Error() string {
+    return fmt.Sprintf("error initializing field: %v, err=%v", e.fieldName, e.err)
+}
+
 type ErrorFieldFormatterInit struct {
     field Field
     err   error
@@ -81,3 +90,26 @@ func (e *ErrorInvalidFieldDataType) Error() string {
 var ErrorEmptyFieldName = errors.New("field name cannot be empty")
 
 var ErrorNilFormatter = errors.New("formatter cannot be nil")
+
+type ErrorMissingFieldFormatter struct {
+    fieldName string
+}
+
+func (e *ErrorMissingFieldFormatter) Error() string {
+    return fmt.Sprintf("missing field formatter for field: %v", e.fieldName)
+}
+
+func printSkippingFieldErr(fieldName string, err error) {
+    fmt.Printf("WARNING: %s, not including field.\n", &ErrorFieldInitialization{fieldName, err})
+}
+
+type ErrorNonFatalFormatterError struct {
+    fieldName string
+    err       error
+}
+
+func (e *ErrorNonFatalFormatterError) Error() string {
+    return fmt.Sprintf("non-fatal error formatting field: %v, err=%v", e.fieldName, e.err)
+}
+
+var ErrorTagFieldActiveButNoTag = errors.New("tag field is active but the logger has no tag set. disable the tag field, or add a tag to the logger")

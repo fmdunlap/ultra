@@ -10,7 +10,7 @@ import (
 
 func ExampleNewFormatter() {
     formatter, _ := NewFormatter(OutputFormatText, []Field{
-        NewLevelField(Brackets.Angle),
+        NewDefaultLevelField(),
         NewMessageField(),
     })
 
@@ -22,7 +22,7 @@ func ExampleNewFormatter() {
 
 func ExampleNewFormatter_jSON() {
     formatter, _ := NewFormatter(OutputFormatJSON, []Field{
-        NewLevelField(Brackets.Angle),
+        NewDefaultLevelField(),
         NewMessageField(),
     })
 
@@ -34,7 +34,7 @@ func ExampleNewFormatter_jSON() {
 
 func ExampleWithDefaultColorization() {
     formatter, _ := NewFormatter(OutputFormatText, []Field{
-        NewLevelField(Brackets.Angle),
+        NewDefaultLevelField(),
         NewMessageField(),
     }, WithDefaultColorization())
 
@@ -54,6 +54,14 @@ type invalidField struct{}
 
 func (f invalidField) NewFieldFormatter() (FieldFormatter, error) {
     return nil, errors.New("invalid field")
+}
+
+func (f invalidField) Name() string {
+    return "invalidField"
+}
+
+func (f invalidField) Settings() FieldSettings {
+    return FieldSettings{}
 }
 
 func Test_ultraFormatter_Format(t *testing.T) {
@@ -79,8 +87,8 @@ func Test_ultraFormatter_Format(t *testing.T) {
             want: []byte("[tag] <INFO> test"),
             fields: []Field{
                 NewDefaultTagField(),
-                NewLevelField(Brackets.Angle),
-                &fieldMessage{},
+                NewDefaultLevelField(),
+                NewMessageField(),
             },
         },
         {
@@ -92,13 +100,13 @@ func Test_ultraFormatter_Format(t *testing.T) {
             want: []byte(""),
         },
         {
-            name: "Invalid prefix field throws error",
+            name: "Invalid field throws error",
             args: args{
                 level: Info,
                 msg:   "test",
             },
             fields: []Field{
-                invalidField{},
+                &invalidField{},
             },
             wantErr: true,
         },
@@ -109,7 +117,7 @@ func Test_ultraFormatter_Format(t *testing.T) {
                 msg:   "test",
             },
             fields: []Field{
-                &fieldMessage{},
+                NewMessageField(),
             },
             enableColor: true,
             levelColors: map[Level]Color{
@@ -137,24 +145,31 @@ func Test_ultraFormatter_Format(t *testing.T) {
             },
             fields: []Field{
                 NewDefaultTagField(),
-                NewLevelField(Brackets.Angle),
-                &fieldMessage{},
+                NewDefaultLevelField(),
+                NewMessageField(),
                 NewDefaultTagField(),
-                NewLevelField(Brackets.Angle),
+                NewDefaultLevelField(),
             },
             want: Colors.Red.Colorize([]byte("[tag] <ERROR> test [tag] <ERROR>")),
         },
     }
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
+
             var f LogLineFormatter
-            f = &TextFormatter{
-                Fields:         tt.fields,
-                FieldSeparator: " ",
+            var err error
+            if tt.enableColor {
+                f, err = NewFormatter(OutputFormatText, tt.fields, WithColorization(tt.levelColors))
+            } else {
+                f, err = NewFormatter(OutputFormatText, tt.fields)
             }
 
-            if tt.enableColor {
-                f = NewColorizedFormatter(f, tt.levelColors)
+            if err != nil {
+                if tt.wantErr {
+                    return
+                }
+                t.Errorf("NewFormatter() error = %v, wantErr %v", err, tt.wantErr)
+                return
             }
 
             lineArgs := LogLineArgs{
@@ -162,7 +177,7 @@ func Test_ultraFormatter_Format(t *testing.T) {
                 Tag:   "tag",
             }
 
-            if got := f.FormatLogLine(lineArgs, tt.args.msg); !bytes.Equal(got.bytes, tt.want) {
+            if got := f.FormatLogLine(lineArgs, []any{tt.args.msg}); !bytes.Equal(got.bytes, tt.want) {
                 fmt.Println("Got:  ", string(got.bytes))
                 fmt.Println("Got:  ", got.bytes)
                 fmt.Println("Want: ", tt.want)

@@ -20,7 +20,7 @@ type ColorizedFormatter struct {
 
 // FormatLogLine formats the log line using the provided data and returns a FormatResult which contains the formatted
 // log line and any errors that may have occurred.
-func (f *ColorizedFormatter) FormatLogLine(args LogLineArgs, data any) FormatResult {
+func (f *ColorizedFormatter) FormatLogLine(args LogLineArgs, data []any) FormatResult {
     res := f.BaseFormatter.FormatLogLine(args, data)
     if res.err != nil {
         return res

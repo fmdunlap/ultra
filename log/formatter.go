@@ -1,7 +1,5 @@
 package log
 
-import "errors"
-
 // OutputFormat is a type representing the output format of a formatter.
 //
 // It can be one of the following:
@@ -37,7 +35,7 @@ type FormatResult struct {
 type LogLineFormatter interface {
     // FormatLogLine formats the log line using the provided data and returns a FormatResult which contains the
     // formatted log line and any errors that may have occurred.
-    FormatLogLine(args LogLineArgs, data any) FormatResult
+    FormatLogLine(args LogLineArgs, data []any) FormatResult
 }
 
 // FormatterOption is a function that takes a LogLineFormatter and returns a new LogLineFormatter that has an option
@@ -47,11 +45,20 @@ type FormatterOption func(f LogLineFormatter) LogLineFormatter
 func NewFormatter(outputFormat OutputFormat, fields []Field, opts ...FormatterOption) (LogLineFormatter, error) {
     var f LogLineFormatter
 
+    fieldFormatters := make(map[string]FieldFormatter)
+    for _, field := range fields {
+        fieldFormatter, err := field.NewFieldFormatter()
+        if err != nil {
+            return nil, &ErrorFieldFormatterInit{field: field, err: err}
+        }
+        fieldFormatters[field.Name()] = fieldFormatter
+    }
+
     switch outputFormat {
     case OutputFormatJSON:
-        f = &JSONFormatter{Fields: fields}
+        f = &jsonFormatter{Fields: fields, FieldFormatters: fieldFormatters}
     case OutputFormatText:
-        f = &TextFormatter{Fields: fields}
+        f = &textFormatter{Fields: fields, FieldFormatters: fieldFormatters}
     default:
         return nil, &ErrorInvalidOutput{outputFormat: outputFormat}
     }
@@ -81,29 +88,4 @@ func WithColorization(colors map[Level]Color) FormatterOption {
     return func(f LogLineFormatter) LogLineFormatter {
         return NewColorizedFormatter(f, colors)
     }
-}
-
-// extractFieldResult extracts the field result from the field, and returns the field result and any errors that may
-// occur. If the field result is nil, the field should be ignored. If the field result is not nil, but the data is
-// nil, the formatter should decide how to handle it. For instance, a text formatter may choose to output the "<nil>"
-// string, while a JSON formatter may choose to omit the field entirely.
-func computeFieldResult(field Field, args LogLineArgs, data any) (*FieldResult, error) {
-    fieldFormatter, err := field.NewFieldFormatter()
-    if err != nil {
-        // Need to handle this error in the caller; a fieldformatter error means that the something has gone wrong
-        // with the field itself, and we should not continue formatting.
-        return nil, &ErrorFieldFormatterInit{field: field, err: err}
-    }
-
-    fieldResult, err := fieldFormatter(args, data)
-
-    if err != nil {
-        var invalidDataTypeError *ErrorInvalidFieldDataType
-        if errors.As(err, &invalidDataTypeError) {
-            // Purposefully ignore this error in the caller. This is equivalent to throwing field away.
-            return nil, nil
-        }
-    }
-
-    return &fieldResult, nil
 }

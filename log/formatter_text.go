@@ -2,12 +2,14 @@ package log
 
 import (
     "fmt"
+    "strings"
 )
 
-// TextFormatter is a formatter that formats log lines as text.
-type TextFormatter struct {
-    Fields         []Field
-    FieldSeparator string
+// textFormatter is a formatter that formats log lines as text.
+type textFormatter struct {
+    Fields          []Field                   // Keep these in an array to preserve the order of the fields.
+    FieldFormatters map[string]FieldFormatter // Map of the field name to its formatter
+    FieldSeparator  string
 }
 
 // TODO: Provide a way to specify the separator between fields.
@@ -15,31 +17,44 @@ type TextFormatter struct {
 
 // FormatLogLine formats the log line using the provided data and returns a FormatResult which contains the formatted
 // log line and any errors that may have occurred.
-func (f *TextFormatter) FormatLogLine(args LogLineArgs, data any) FormatResult {
-    line := make([]byte, 0)
+func (f *textFormatter) FormatLogLine(args LogLineArgs, data []any) FormatResult {
     args.OutputFormat = OutputFormatText
 
-    for i, field := range f.Fields {
-        fieldResult, err := computeFieldResult(field, args, data)
-        if err != nil {
-            return FormatResult{nil, &ErrorFieldFormatterInit{field: field, err: err}}
+    line := make([]byte, 0)
+    procResChan := make(chan fieldProcessingResult)
+
+    go processFieldsWithData(procResChan, args, f.Fields, f.FieldFormatters, data)
+    for {
+        result, ok := <-procResChan
+        if !ok {
+            break
         }
 
-        if fieldResult == nil {
-            continue
+        if result.err != nil {
+            return FormatResult{nil, result.err}
         }
 
-        resultBytes := fieldResult.Data
-        if fieldResult.Data == nil {
-            resultBytes = "<nil>"
-        }
+        line = f.addDataToLogLine(line, result.fieldData, result.fieldName, result.fieldSettings)
+    }
 
-        if i < len(f.Fields)-1 {
-            line = fmt.Append(line, resultBytes, " ")
-        } else {
-            line = fmt.Append(line, resultBytes)
-        }
+    if len(line) > 0 {
+        line = line[:len(line)-1]
     }
 
     return FormatResult{line, nil}
+}
+
+func (f *textFormatter) addDataToLogLine(line []byte, resultBytes any, fName string, fSettings FieldSettings) []byte {
+    b := strings.Builder{}
+
+    if !fSettings.HideKey {
+        b.WriteString(fName)
+        b.WriteString("=")
+    }
+
+    b.WriteString(fmt.Sprintf("%v", resultBytes))
+
+    b.WriteString(" ")
+
+    return fmt.Append(line, b.String())
 }
