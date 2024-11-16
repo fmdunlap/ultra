@@ -144,3 +144,31 @@ user := User{
 
 logger.Info("Some message", user) // Output: {"level":"INFO","message":"Some message","user":{"Name":"John Doe","Admin":true}}
 ```
+
+## Key Features
+
+### Static Structured Logging
+
+Ultralogger, unlike some other logging libraries, is designed to be statically structured. That means that you set up
+the structure of your log lines beforehand, and then you can use the logger to log your data in a consistent way.
+
+This makes it easier to read and understand your logs, and also makes it easier to use the logger in a multi-threaded
+environment. It also makes ultra/log *really fast.*
+
+
+## TODO
+
+- [ ] Provide a dynamic structured logging interface that allows for more flexibility in logging data.*
+- [ ] Add more output formats + improve extensibility of the file formatter interface (CLF, XML, etc.)
+- [ ] Improve docs, tests, and examples.
+- [ ] Add more examples
+- [ ] Review processor implementation & improve readability
+- [ ] General optimizations; we've got 2 allocs per log line, and disabled levels are taking a little longer than I'd
+      like them to.
+- [ ] Provide a common benchmark suite for internal benchmarks & comparison w/ other logging libraries.
+- [ ] Provide a mechanism for allowing the user to flush-on-panic. (E.g. by defining a defer in their main w/ 
+      logger.Flush())
+- [ ] Make the logger async timeout configurable.
+
+*Work in progress. Plan is for the client to provide a field that defines how a data type should be logged, and then
+re-use that field to log all copies of that data type passed to the logger.
