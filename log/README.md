@@ -1,6 +1,6 @@
 # ultra/log
 
-[![Logo](/git/logo.png)](https://github.com/fmdunlap/ultralogger)
+[![Logo](/git/logo.png)](https://github.com/fmdunlap/ultra/tree/main/log)
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/fmdunlap/go-ultralogger.svg)](https://pkg.go.dev/github.com/fmdunlap/go-ultralogger)
 
@@ -155,18 +155,17 @@ the structure of your log lines beforehand, and then you can use the logger to l
 This makes it easier to read and understand your logs, and also makes it easier to use the logger in a multi-threaded
 environment. It also makes ultra/log *really fast.*
 
-
 ## TODO
 
 - [ ] Provide a dynamic structured logging interface that allows for more flexibility in logging data.*
 - [ ] Add more output formats + improve extensibility of the file formatter interface (CLF, XML, etc.)
 - [ ] Improve docs, tests, and examples.
 - [ ] Add more examples
-- [ ] Review processor implementation & improve readability
+- [x] Review processor implementation & improve readability
 - [ ] General optimizations; we've got 2 allocs per log line, and disabled levels are taking a little longer than I'd
       like them to.
 - [ ] Provide a common benchmark suite for internal benchmarks & comparison w/ other logging libraries.
-- [ ] Provide a mechanism for allowing the user to flush-on-panic. (E.g. by defining a defer in their main w/ 
+- [x] Provide a mechanism for allowing the user to flush-on-panic. (E.g. by defining a defer in their main w/ 
       logger.Flush())
 - [ ] Make the logger async timeout configurable.
 
