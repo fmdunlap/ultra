@@ -10,7 +10,7 @@ Ultra is a collection of high-performance, production-ready Go packages designed
 
 ## Installing
 ```go
-go get "github.com/fmdunlap/ultra"
+go get github.com/fmdunlap/ultra
 ```
 
 ## Available Packages
