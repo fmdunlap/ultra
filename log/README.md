@@ -1,6 +1,6 @@
 # ultra/log
 
-[![Logo](/git/logo.png)](https://github.com/fmdunlap/ultra/tree/main/log)
+[![Logo](/repo/logo.png)](https://github.com/fmdunlap/ultra/tree/main/log)
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/fmdunlap/go-ultralogger.svg)](https://pkg.go.dev/github.com/fmdunlap/go-ultralogger)
 
