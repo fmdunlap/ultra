@@ -14,8 +14,8 @@ go get "github.com/fmdunlap/ultra"
 ```
 
 ## Available Packages
-* log - A structured, concurrent logger with support for colorization, extensible formatting, terminal colorization,
-  multi-writer support with asynchronous logging, separate formatters for each writer, and more!
+* `ultra/log` - A structured, concurrent logger with support for colorization, extensible formatting, terminal
+  colorization, multi-writer support with asynchronous logging, separate formatters for each writer, and more!
 
 More packages coming soon!
 
